@@ -384,7 +384,7 @@ with st.expander('Monte Carlo Simulation'):
     }
 
     fig1 = plt.figure()
-    plt.style.use('seaborn-darkgrid')  # Outro estilo disponível
+    plt.style.use('ggplot')  # Altere para o estilo de sua preferência
     plt.title(ticker_input + ' Monte Carlo Simulation', fontdict = font_1)
     plt.xlabel('Equity value (in $)', fontdict = font_1)
     plt.ylabel('Number of occurences', fontdict = font_1)
