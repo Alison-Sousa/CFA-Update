@@ -147,7 +147,7 @@ class Company:
 
 st.title('Monte Carlo Valuation App')
 
-with st.expander('How to Use'):  # Corrigido de beta_expander para expander
+with st.expander('How to Use'):
     st.write('This application allows you to conduct a **probabilistic** \
         valuation of companies you are interested in. Please enter the \
         **stock ticker** of your company. Subsequently, the program will \
@@ -171,7 +171,7 @@ if status_radio == 'Search':
     st.header('Key Valuation Metrics')
     st.dataframe(company.inputs)
 
-with st.expander('Monte Carlo Simulation'):  # Corrigido de beta_expander para expander
+with st.expander('Monte Carlo Simulation'):
     st.subheader('Random variables')
     st.write('When conducting a company valuation through a Monte Carlo simulation, \
         a variety of input metrics can be treated as random variables. Such \
@@ -208,7 +208,7 @@ with st.expander('Monte Carlo Simulation'):  # Corrigido de beta_expander para e
     }
 
 
-    col11, col12, col13 = st.beta_columns(3)
+    col11, col12, col13 = st.columns(3)
 
 
     with col11:
@@ -289,7 +289,7 @@ with st.expander('Monte Carlo Simulation'):  # Corrigido de beta_expander para e
             parameter_dict_distribution['tax rate'] = 'uniform'
 
         
-    col21, col22, col23 = st.beta_columns(3)
+    col21, col22, col23 = st.columns(3)
 
     with col21:
         st.subheader('Net capex/sales')
@@ -392,7 +392,7 @@ with st.expander('Monte Carlo Simulation'):  # Corrigido de beta_expander para e
     st.pyplot(fig1)
 
 
-    col31, col32 = st.beta_columns(2)
+    col31, col32 = st.columns(2)
     with col31:
         fig2 = plt.figure()
         x = range(6)[1:6]
