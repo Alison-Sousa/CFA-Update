@@ -1,2 +1,4 @@
 # 📈**CFA Challenge Predictionapp**
+![Dashboard](CFA.PNG)
+
 ### **I developed a Streamlit app utilizing Monte Carlo simulations to predict future stock prices. This app was a key component of my investment thesis presented during the CFA Research Challenge, the premier university-level competition in the financial markets.**
