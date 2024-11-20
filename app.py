@@ -147,7 +147,7 @@ class Company:
 
 st.title('Monte Carlo Valuation App')
 
-with st.beta_expander('How to Use'):
+with st.expander('How to Use'):  # Corrigido de beta_expander para expander
     st.write('This application allows you to conduct a **probabilistic** \
         valuation of companies you are interested in. Please enter the \
         **stock ticker** of your company. Subsequently, the program will \
@@ -161,7 +161,6 @@ st.header('General company information')
 ticker_input = st.text_input('Please enter your company ticker here:')
 status_radio = st.radio('Please click Search when you are ready.', ('Entry', 'Search'))
 
-
 @st.cache
 def get_company_data():
     company = Company(ticker_input)
@@ -172,9 +171,7 @@ if status_radio == 'Search':
     st.header('Key Valuation Metrics')
     st.dataframe(company.inputs)
 
-
-with st.beta_expander('Monte Carlo Simulation'):
-
+with st.expander('Monte Carlo Simulation'):  # Corrigido de beta_expander para expander
     st.subheader('Random variables')
     st.write('When conducting a company valuation through a Monte Carlo simulation, \
         a variety of input metrics can be treated as random variables. Such \
