@@ -1,2 +1,2 @@
-# 📈**MonteCarlo stock prices predictionapp**
-### **I developed a Streamlit app that leverages the power of Monte Carlo simulation to predict future stock prices. It allows users to input stock ticker symbols and run the Monte Carlo simulation in real-time to see the potential future prices of the stocks.**
+# 📈**CFA Challenge Predictionapp**
+### **I developed a Streamlit app utilizing Monte Carlo simulations to predict future stock prices. This app was a key component of my investment thesis presented during the CFA Research Challenge, the premier university-level competition in the financial markets.**
