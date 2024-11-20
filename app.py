@@ -19,8 +19,6 @@ st.write('Monte Carlo simulations are valuable tools for this purpose. These sim
 
 st.markdown("<br>", unsafe_allow_html=True)
 
-st.markdown("<br>", unsafe_allow_html=True)
-
 st.write('Obtaining and displaying historical data next, we will generate historical financial data using yfinance. The desired interval of interest must be defined before we can pull the data. We will plot daily closing stock prices so we can focus on that information.')
 
 st.markdown("<br>", unsafe_allow_html=True)
