@@ -1,424 +1,187 @@
-import pandas as pd
-from yahoo_fin import stock_info as si
-import streamlit as st
+import yfinance as yf
 import numpy as np
-from matplotlib import pyplot as plt
-
-def comma_format(number):
-    if not pd.isna(number) and number != 0:
-        return '{:,.0f}'.format(number)
-
-def percentage_format(number):
-    if not pd.isna(number) and number != 0:
-        return '{:.1%}'.format(number) 
-
-def calculate_value_distribution(parameter_dict_1, parameter_dict_2, parameter_dict_distribution):
-    parameter_list = []
-    parameter_list.append(parameter_dict_1['latest revenue'])
-    for i in parameter_dict_2:
-        if parameter_dict_distribution[i] == 'normal':
-            parameter_list.append((np.random.normal(parameter_dict_1[i], parameter_dict_2[i]))/100)
-        if parameter_dict_distribution[i] == 'triangular':
-            lower_bound = parameter_dict_1[i]
-            mode = parameter_dict_2[i]
-            parameter_list.append((np.random.triangular(lower_bound, mode, 2*mode-lower_bound))/100)
-        if parameter_dict_distribution[i] == 'uniform':
-            parameter_list.append((np.random.uniform(parameter_dict_1[i], parameter_dict_2[i]))/100)
-    parameter_list.append(parameter_dict_1['net debt'])
-    return parameter_list
-
-class Company:
-
-    def __init__(self, ticker):
-        self.income_statement = si.get_income_statement(ticker)
-        self.balance_sheet = si.get_balance_sheet(ticker)
-        self.cash_flow_statement = si.get_cash_flow(ticker)
-        self.inputs = self.get_inputs_df()
-
-    def get_inputs_df(self):
-        income_statement_list = ['totalRevenue', 'ebit', 
-        'incomeBeforeTax', 'incomeTaxExpense'
-        ]
-        balance_sheet_list = ['totalCurrentAssets', 'cash',
-        'totalCurrentLiabilities', 'shortLongTermDebt',
-        'longTermDebt'
-        ]
-        balance_sheet_list_truncated = ['totalCurrentAssets', 'cash',
-        'totalCurrentLiabilities', 'longTermDebt'
-        ]
-        balance_sheet_list_no_debt = ['totalCurrentAssets', 'cash',
-        'totalCurrentLiabilities'
-        ]
-
-        cash_flow_statement_list = ['depreciation', 
-        'capitalExpenditures'
-        ]
-
-        income_statement_df = self.income_statement.loc[income_statement_list]
-        try:
-            balance_sheet_df = self.balance_sheet.loc[balance_sheet_list]
-        except KeyError:
-            try:
-                balance_sheet_df = self.balance_sheet.loc[balance_sheet_list_truncated]
-            except KeyError:
-                balance_sheet_df = self.balance_sheet.loc[balance_sheet_list_no_debt]
-        cash_flow_statement_df = self.cash_flow_statement.loc[cash_flow_statement_list]
-
-        df = income_statement_df.append(balance_sheet_df)
-        df = df.append(cash_flow_statement_df)        
-
-        columns_ts = df.columns
-        columns_str = [str(i)[:10] for i in columns_ts]
-        columns_dict = {}
-        for i,f in zip(columns_ts, columns_str):
-            columns_dict[i] = f
-        df.rename(columns_dict, axis = 'columns', inplace = True)
-
-        columns_str.reverse()
-        df = df[columns_str]
-
-        prior_revenue_list = [None]
-        for i in range(len(df.loc['totalRevenue'])):
-            if i != 0 and i != len(df.loc['totalRevenue']):
-                prior_revenue_list.append(df.loc['totalRevenue'][i-1])
-
-        df.loc['priorRevenue'] = prior_revenue_list
-        df.loc['revenueGrowth'] = (df.loc['totalRevenue'] - df.loc['priorRevenue']) / df.loc['priorRevenue']
-        df.loc['ebitMargin'] = df.loc['ebit']/df.loc['totalRevenue'] 
-        df.loc['taxRate'] = df.loc['incomeTaxExpense']/df.loc['incomeBeforeTax'] 
-        df.loc['netCapexOverSales'] = (- df.loc['capitalExpenditures'] - df.loc['depreciation']) / df.loc['totalRevenue']
-        try:
-            df.loc['nwc'] = (df.loc['totalCurrentAssets'] - df.loc['cash']) - (df.loc['totalCurrentLiabilities'] - df.loc['shortLongTermDebt'])
-        except KeyError:
-            df.loc['nwc'] = (df.loc['totalCurrentAssets'] - df.loc['cash']) - (df.loc['totalCurrentLiabilities'])
-        df.loc['nwcOverSales'] = df.loc['nwc']/df.loc['totalRevenue']
-        try:
-            df.loc['netDebt'] = df.loc['shortLongTermDebt'] + df.loc['longTermDebt'] - df.loc['cash']
-        except KeyError:
-            try:
-                df.loc['netDebt'] = df.loc['longTermDebt'] - df.loc['cash']
-            except KeyError:
-                df.loc['netDebt'] = - df.loc['cash']
-        df = df[12:len(df)].drop('nwc')
-        df['Historical average'] = [df.iloc[i].mean() for i in range(len(df))]
-        return df
-
-    def get_free_cash_flow_forecast(self, parameter_list):
-        df = pd.DataFrame(columns = [1, 2, 3, 4, 5])
-        revenue_list = []
-        for i in range(5):
-            revenue_list.append(parameter_list[0] * (1 + parameter_list[1]) ** (i+1))
-        df.loc['Revenues'] = revenue_list
-        ebit_list = [i * parameter_list[2] for i in df.loc['Revenues']]
-        df.loc['EBIT'] = ebit_list
-        tax_list = [i * parameter_list[3] for i in df.loc['EBIT']]
-        df.loc['Taxes'] = tax_list
-        nopat_list = df.loc['EBIT'] - df.loc['Taxes']
-        df.loc['NOPAT'] = nopat_list
-        net_capex_list = [i * parameter_list[4] for i in df.loc['Revenues']]
-        df.loc['Net capital expenditures'] = net_capex_list
-        nwc_list = [i * parameter_list[5] for i in df.loc['Revenues']]
-        df.loc['Changes in NWC'] = nwc_list
-        free_cash_flow_list = df.loc['NOPAT'] - df.loc['Net capital expenditures'] - df.loc['Changes in NWC']
-        df.loc['Free cash flow'] = free_cash_flow_list
-        return df
-
-    def discount_free_cash_flows(self, parameter_list, discount_rate, terminal_growth):
-        free_cash_flow_df = self.get_free_cash_flow_forecast(parameter_list)
-        df = free_cash_flow_df
-        discount_factor_list = [(1 + discount_rate) ** i for i in free_cash_flow_df.columns]
-        df.loc['Discount factor'] = discount_factor_list
-        present_value_list = df.loc['Free cash flow'] / df.loc['Discount factor']
-        df.loc['PV free cash flow'] = present_value_list
-        df[0] = [0 for i in range(len(df))]
-        df.loc['Sum PVs', 0] = df.loc['PV free cash flow', 1:5].sum()
-        df.loc['Terminal value', 5] = df.loc['Free cash flow', 5] * (1 + terminal_growth) / (discount_rate - terminal_growth)
-        df.loc['PV terminal value', 0] = df.loc['Terminal value', 5] / df.loc['Discount factor', 5]
-        df.loc['Company value (enterprise value)', 0] = df.loc['Sum PVs', 0] + df.loc['PV terminal value', 0]
-        df.loc['Net debt', 0] = parameter_list[-1]
-        df.loc['Equity value', 0] = df.loc['Company value (enterprise value)', 0] - df.loc['Net debt', 0]
-        equity_value = df.loc['Equity value', 0] 
-        df = df.applymap(lambda x: comma_format(x))
-        df = df.fillna('')
-        column_name_list = range(6)
-        df = df[column_name_list]
-        return df, equity_value
+from random import random
+import matplotlib.pyplot as plt
+from scipy.stats import norm
+import streamlit as st
+from datetime import datetime, timedelta
 
 
-st.title('CFA Challenge')
+dict_name_tick = {'NASDAQ': '^IXIC', 'S&P 500': '^GSPC', 'Tesla, Inc.': 'TSLA', 'Lyft, Inc.': 'LYFT', 'Banco Bradesco S.A.': 'BBD', 'Ford Motor Company': 'F', 'Amazon.com, Inc.': 'AMZN', 'NVIDIA Corporation': 'NVDA', 'Alphabet Inc.': 'GOOG', 'Apple Inc.': 'AAPL', 'Advanced Micro Devices, Inc.': 'AMD', 'Itaú Unibanco Holding S.A.': 'ITUB', 'Palantir Technologies Inc.': 'PLTR', 'Uber Technologies, Inc.': 'UBER', 'NIO Inc.': 'NIO', 'Carnival Corporation & plc': 'CCL', 'AMC Entertainment Holdings, Inc.': 'APE', 'SoFi Technologies, Inc.': 'SOFI', 'PayPal Holdings, Inc.': 'PYPL', 'Lumen Technologies, Inc.': 'LUMN', 'Petróleo Brasileiro S.A. - Petrobras': 'PBR-A', 'Meta Platforms, Inc.': 'META', 'Bank of America Corporation': 'BAC', 'Intel Corporation': 'INTC', 'Credit Suisse Group AG': 'CS', 'Microsoft Corporation': 'MSFT', 'Snap Inc.': 'SNAP', 'AT&T Inc.': 'T', 'Exxon Mobil Corporation': 'XOM', 'Transocean Ltd.': 'RIG', 'C3.ai, Inc.': 'AI', 'Vale S.A.': 'VALE', 'Lucid Group, Inc.': 'LCID', 'Affirm Holdings, Inc.': 'AFRM', 'Southwestern Energy Company': 'SWN', 'Ambev S.A.': 'ABEV', 'Ginkgo Bioworks Holdings, Inc.': 'DNA', 'Nu Holdings Ltd.': 'NU', 'BP p.l.c.': 'BP', 'Sirius XM Holdings Inc.': 'SIRI', 'Wells Fargo & Company': 'WFC', 'Alibaba Group Holding Limited': 'BABA', 'Cloudflare, Inc.': 'NET', 'Pfizer Inc.': 'PFE', 'iQIYI, Inc.': 'IQ', 'Cisco Systems, Inc.': 'CSCO', 'Coinbase Global, Inc.': 'COIN', 'Rivian Automotive, Inc.': 'RIVN', 'Citigroup Inc.': 'C', 'Comcast Corporation': 'CMCSA', 'AGNC Investment Corp.': 'AGNC', 'Lufax Holding Ltd': 'LU', 'The Walt Disney Company': 'DIS', 'Verizon Communications Inc.': 'VZ', 'Shopify Inc.': 'SHOP', 'DraftKings Inc.': 'DKNG', 'Kinross Gold Corporation': 'KGC', 'Peloton Interactive, Inc.': 'PTON', 'Grab Holdings Limited': 'GRAB', 'American Airlines Group Inc.': 'AAL', 'Hewlett Packard Enterprise Company': 'HPE', 'V.F. Corporation': 'VFC', 'Unity Software Inc.': 'U', 'Occidental Petroleum Corporation': 'OXY', 'Nokia Oyj': 'NOK', 'Pinterest, Inc.': 'PINS', 'Kinder Morgan, Inc.': 'KMI', 'Barrick Gold Corporation': 'GOLD', 'PG&E Corporation': 'PCG', 'XPeng Inc.': 'XPEV', 'Baxter International Inc.': 'BAX', 'The Coca-Cola Company': 'KO', 'Warner Bros. Discovery, Inc.': 'WBD', 'Infosys Limited': 'INFY', 'DiDi Global Inc.': 'DIDIY', 'Chevron Corporation': 'CVX', 'Medical Properties Trust, Inc.': 'MPW', 'Taiwan Semiconductor Manufacturing Company Limited': 'TSM', 'Plug Power Inc.': 'PLUG', 'Micron Technology, Inc.': 'MU', 'General Motors Company': 'GM', 'ChargePoint Holdings, Inc.': 'CHPT', 'Block, Inc.': 'SQ', 'Salesforce, Inc.': 'CRM', 'Farfetch Limited': 'FTCH', 'Newell Brands Inc.': 'NWL', 'JD.com, Inc.': 'JD', 'CSX Corporation': 'CSX', 'Marathon Oil Corporation': 'MRO', 'Gerdau S.A.': 'GGB', 'Roblox Corporation': 'RBLX', 'Fisker Inc.': 'FSR', 'NextEra Energy, Inc.': 'NEE', 'ConocoPhillips': 'COP', 'Energy Transfer LP': 'ET', 'Teva Pharmaceutical Industries Limited': 'TEVA', 'Oak Street Health, Inc.': 'OSH', 'Norwegian Cruise Line Holdings Ltd.': 'NCLH', 'Schlumberger Limited': 'SLB', 'Expedia Group, Inc.': 'EXPE', 'Kosmos Energy Ltd.': 'KOS', 'Coterra Energy Inc.': 'CTRA', 'Annaly Capital Management, Inc.': 'NLY', 'KE Holdings Inc.': 'BEKE', 'AbbVie Inc.': 'ABBV', 'Flex Ltd.': 'FLEX', 'Luminar Technologies, Inc.': 'LAZR', 'Exelon Corporation': 'EXC', 'EQT Corporation': 'EQT', 'Lloyds Banking Group plc': 'LYG', 'Devon Energy Corporation': 'DVN', 'Li Auto Inc.': 'LI', 'Bristol-Myers Squibb Company': 'BMY', 'Robinhood Markets, Inc.': 'HOOD', 'News Corporation': 'NWSA', 'Halliburton Company': 'HAL', 'The Procter & Gamble Company': 'PG', 'Doximity, Inc.': 'DOCS', 'Delta Air Lines, Inc.': 'DAL', 'ASE Technology Holding Co., Ltd.': 'ASX', 'Freeport-McMoRan Inc.': 'FCX', 'APA Corporation': 'APA', 'Bilibili Inc.': 'BILI', 'KeyCorp': 'KEY', 'Paramount Global': 'PARA', 'Cleveland-Cliffs Inc.': 'CLF', 'CVS Health Corporation': 'CVS', 'Huntington Bancshares Incorporated': 'HBAN', 'Marvell Technology, Inc.': 'MRVL', 'New York Community Bancorp, Inc.': 'NYCB', 'Avantor, Inc.': 'AVTR', 'Under Armour, Inc.': 'UAA', 'The Western Union Company': 'WU', 'Shell plc': 'SHEL', "Macy's, Inc.": 'M', 'Netflix, Inc.': 'NFLX', 'Keurig Dr Pepper Inc.': 'KDP', 'Marqeta, Inc.': 'MQ', 'Sunrun Inc.': 'RUN', 'Johnson & Johnson': 'JNJ', 'Full Truck Alliance Co. Ltd.': 'YMM', 'Roku, Inc.': 'ROKU', 'Activision Blizzard, Inc.': 'ATVI', 'Array Technologies, Inc.': 'ARRY', 'B2Gold Corp.': 'BTG', 'RLX Technology Inc.': 'RLX', 'Bloom Energy Corporation': 'BE', 'United Microelectronics Corporation': 'UMC', 'ON Semiconductor Corporation': 'ON', 'Globus Medical, Inc.': 'GMED', 'Walgreens Boots Alliance, Inc.': 'WBA', 'JPMorgan Chase & Co.': 'JPM', 'The Williams Companies, Inc.': 'WMB', 'Range Resources Corporation': 'RRC', 'CNH Industrial N.V.': 'CNHI', 'Enphase Energy, Inc.': 'ENPH', 'Crescent Point Energy Corp.': 'CPG', 'Alteryx, Inc.': 'AYX', 'DexCom, Inc.': 'DXCM', 'Coty Inc.': 'COTY', 'Starbucks Corporation': 'SBUX', 'Microchip Technology Incorporated': 'MCHP', 'Viatris Inc.': 'VTRS', 'Magna International Inc.': 'MGA', 'MGM Resorts International': 'MGM', 'PepsiCo, Inc.': 'PEP', 'United Airlines Holdings, Inc.': 'UAL', 'Cameco Corporation': 'CCJ', 'CEMEX, S.A.B. de C.V.': 'CX', 'Antero Resources Corporation': 'AR', 'Airbnb, Inc.': 'ABNB', 'Regions Financial Corporation': 'RF', 'Merck & Co., Inc.': 'MRK', 'Amcor plc': 'AMCR', 'JetBlue Airways Corporation': 'JBLU', 'Tencent Music Entertainment Group': 'TME', 'The Goodyear Tire & Rubber Company': 'GT', 'Baker Hughes Company': 'BKR', 'Yamana Gold Inc.': 'AUY', 'Permian Resources Corporation': 'PR', 'Altria Group, Inc.': 'MO', 'Genworth Financial, Inc.': 'GNW', 'Wayfair Inc.': 'W', 'Franklin Resources, Inc.': 'BEN', 'Fortinet, Inc.': 'FTNT', 'AstraZeneca PLC': 'AZN', 'Telefonaktiebolaget LM Ericsson (publ)': 'ERIC', 'QuantumScape Corporation': 'QS', 'Gilead Sciences, Inc.': 'GILD', 'Mondelez International, Inc.': 'MDLZ', 'BlackBerry Limited': 'BB', 'International Flavors & Fragrances Inc.': 'IFF', 'Texas Instruments Incorporated': 'TXN', 'Boston Scientific Corporation': 'BSX', 'Cenovus Energy Inc.': 'CVE', 'Enterprise Products Partners L.P.': 'EPD', 'Invesco Ltd.': 'IVZ', 'DoorDash, Inc.': 'DASH', 'U.S. Bancorp': 'USB', 'Truist Financial Corporation': 'TFC', 'Peabody Energy Corporation': 'BTU', 'Raytheon Technologies Corporation': 'RTX', 'Oracle Corporation': 'ORCL', 'ZoomInfo Technologies Inc.': 'ZI', 'TAL Education Group': 'TAL', 'Morgan Stanley': 'MS', 'ArcelorMittal S.A.': 'MT', 'AppLovin Corporation': 'APP', 'Stellantis N.V.': 'STLA', 'Mattel, Inc.': 'MAT', 'International Business Machines Corporation': 'IBM', 'XP Inc.': 'XP', 'Patterson-UTI Energy, Inc.': 'PTEN', 'Dominion Energy, Inc.': 'D', 'Walmart Inc.': 'WMT'}
 
-with st.expander('How to Use'):
-    st.write('This application allows you to conduct a **probabilistic** \
-        valuation of companies you are interested in. Please enter the \
-        **stock ticker** of your company. Subsequently, the program will \
-        provide you with **historical key metrics** you can use to specify \
-        key inputs required for valuing the company of your choice. \
-        In addition, you need to provide a **discount rate** and a **terminal \
-        growth rate** at which your company is assumed to grow after year 5 \
-        into the future.')
+st.title("Monte Carlo Stock Price Simulation")
 
-st.header('General company information')
-ticker_input = st.text_input('Please enter your company ticker here:')
-status_radio = st.radio('Please click Search when you are ready.', ('Entry', 'Search'))
+st.markdown("<br>", unsafe_allow_html=True)
 
-@st.cache
-def get_company_data():
-    company = Company(ticker_input)
-    return company
+st.write('Use a Monte Carlo simulation to predict stock prices next year!')
 
-if status_radio == 'Search':
-    company = get_company_data()
-    st.header('Key Valuation Metrics')
-    st.dataframe(company.inputs)
+st.write('Predicting future prices has been an ongoing endeavor for decades.')
 
-with st.expander('Monte Carlo Simulation'):
-    st.subheader('Random variables')
-    st.write('When conducting a company valuation through a Monte Carlo simulation, \
-        a variety of input metrics can be treated as random variables. Such \
-        variables can be distributed according to different distributions. \
-        Below, please specify the distribution from which the respective \
-        variable values should be drawn.')
+st.write('As a stochastic process, the '
+        'stock market poses a challenge for most, if not all, investors. Inherently, stochastic processes are '
+        'difficult or impossible to predict accurately because they are random.')
 
-    parameter_dict_1 = {
-        'latest revenue' : 0,
-        'revenue growth': 0,
-        'ebit margin' : 0,
-        'tax rate' : 0,
-        'capex ratio' : 0,
-        'NWC ratio' : 0,
-        'net debt' : 0
-    }
+st.write('Monte Carlo simulations are useful for this purpose. A simulation can be used to determine the outcome of a process or event that contains '
+        'random variables. News, world events, investor sentiment, etc.. all play a role in the stock market.')
 
-    parameter_dict_2 = {
-        'latest revenue' : 0,
-        'revenue growth': 0,
-        'ebit margin' : 0,
-        'tax rate' : 0,
-        'capex ratio' : 0,
-        'NWC ratio' : 0
-    }
+st.write('With the help of historical data and statistics, we will attempt to predict stock prices a year '
+        'from now. Using Monte Carlo methods you can predict the most probable outcome of any '
+        'stochastic process, whether it be a stock, ETF, or cryptocurrency.')
 
-    parameter_dict_distribution = {
-        'latest revenue' : '',
-        'revenue growth': '',
-        'ebit margin' : '',
-        'tax rate' : '',
-        'capex ratio' : '',
-        'NWC ratio' : ''
-    }
+st.markdown("<br>", unsafe_allow_html=True)
 
+st.markdown(
+    "<span style='color:red; font-weight: bold'>Please note that this is not investment advice.</span>",
+    unsafe_allow_html=True
+)
 
-    col11, col12, col13 = st.columns(3)
+st.markdown("<br>", unsafe_allow_html=True)
 
+st.write('Obtaining and displaying historical data next, we will generate historical financial data using yfinance. The desired interval of interest must be defined before we can pull the data. We will plot daily closing stock prices so we can focus on that information.')
 
-    with col11:
-        st.subheader('Revenue growth')
-        radio_button_revenue_growth = st.radio('Choose growth rate distribution', ('Normal', 'Triangular', 'Uniform'))
+st.markdown("<br>", unsafe_allow_html=True)
 
-        if radio_button_revenue_growth == 'Normal':
-            mean_input = st.number_input('Mean revenue growth rate (in %)')
-            stddev_input = st.number_input('Revenue growth rate std. dev. (in %)')
-            parameter_dict_1['revenue growth'] = mean_input
-            parameter_dict_2['revenue growth'] = stddev_input
-            parameter_dict_distribution['revenue growth'] = 'normal'
+st.write("<h3 style='font-size:20px;'>Select a company</h3>", unsafe_allow_html=True)
 
-        elif radio_button_revenue_growth == 'Triangular':
-            lower_input = st.number_input('Lower end growth rate (in %)')
-            mode_input = st.number_input('Mode growth rate (in %)')
-            parameter_dict_1['revenue growth'] = lower_input
-            parameter_dict_2['revenue growth'] = mode_input
-            parameter_dict_distribution['revenue growth'] = 'triangular'
+name = st.selectbox('Select a company:', list(dict_name_tick.keys()))
 
-        elif radio_button_revenue_growth == 'Uniform':
-            lower_input = st.number_input('Lower end growth rate (in %)')
-            upper_input = st.number_input('Upper end growth rate (in %)')
-            parameter_dict_1['revenue growth'] = lower_input
-            parameter_dict_2['revenue growth'] = upper_input
-            parameter_dict_distribution['revenue growth'] = 'uniform'
-        
+ticker_name = dict_name_tick[name]
 
-    with col12:
-        st.subheader('EBIT margin')
-        radio_button_ebit_margin = st.radio('Choose EBIT margin distribution', ('Normal', 'Triangular', 'Uniform'))
+st.write(f'Ticker selected: {ticker_name}')
 
-        if radio_button_ebit_margin == 'Normal':
-            mean_input = st.number_input('Mean EBIT margin (in %)')
-            stddev_input = st.number_input('EBIT margin std. dev. (in %)')
-            parameter_dict_1['ebit margin'] = mean_input
-            parameter_dict_2['ebit margin'] = stddev_input
-            parameter_dict_distribution['ebit margin'] = 'normal'
+ticker = yf.Ticker(ticker_name)
+start_date = '2012-01-01'
+end_date = (datetime.today() - timedelta(days=1)).strftime("%Y-%m-%d")
+hist = ticker.history(start=start_date, end=end_date)
 
-        elif radio_button_ebit_margin == 'Triangular':
-            lower_input = st.number_input('Lower end EBIT margin (in %)')
-            mode_input = st.number_input('Mode EBIT margin (in %)')
-            parameter_dict_1['ebit margin'] = lower_input
-            parameter_dict_2['ebit margin'] = mode_input
-            parameter_dict_distribution['ebit margin'] = 'triangular'
+hist = hist[['Close']]
 
-        elif radio_button_ebit_margin == 'Uniform':
-            lower_input = st.number_input('Lower end EBIT margin (in %)')
-            upper_input = st.number_input('Upper end EBIT margin (in %)')
-            parameter_dict_1['ebit margin'] = lower_input
-            parameter_dict_2['ebit margin'] = upper_input
-            parameter_dict_distribution['ebit margin'] = 'uniform'
+st.title('Stock prices - ' + name + ' (' + ticker_name + ')')
+st.markdown("<span style='color:black; font-size:20px; font-weight:600'>Currency: $ </span>",unsafe_allow_html=True)
+st.line_chart(hist)
+
+# create day count, price and change lists
+
+days = [i for i in range(1, len(hist['Close']) +1)]
+price_orig = hist['Close'].to_list()
+change = hist['Close'].pct_change().to_list()
+# removing the first term since its NaN
+change = change[1:]
+
+# Statistics for use in Model
+mean = np.mean(change)
+std_dev = np.std(change)
+
+st.markdown("<br>", unsafe_allow_html=True)
+
+st.title('Statistics for stocks')
+
+st.markdown("<span style='color:#31BBDE; font-size:20px; font-weight:700'>Mean percent change: </span>  {} %".format(str(round(mean*100,2))),unsafe_allow_html=True)
+st.markdown("<span style='color:#31BBDE; font-size:20px; font-weight:700'>Standard Deviation of percent change: </span>  {} %".format(str(round(std_dev*100,2))),unsafe_allow_html=True)
+
+st.markdown("<br>", unsafe_allow_html=True)
+
+st.title('Monte Carlo simulation')
+
+st.write('To analyze our results, we need to set up a few things before we start the Monte Carlo simulation. In the first step, we need to specify how many simulations we would like to run, simulations, and how many days we would like to predict.')
+st.write('A year of simulation (or 252 trading days) will be performed in this code (chosen arbitrarily, the more, the better). The original 11 years of data is also plotted, but it is cut after 2800 days to make it easier to visualize prediction lines.')
+st.write(f'Our final step is track the year-out closing price of a prediction and if it’s higher than the {end_date} closing price.')
+
+# Simulation Number and Prediction Period
+st.write("<h3 style='font-size:20px;'>Input the number of simulations and number of trading simulation days:</h3>", unsafe_allow_html=True)
+st.write('By default the simulation assumes 200 simulations and 252 trading days.')
+simulations = st.number_input("Number of simulations:", value=200, min_value=1)
+days_to_sim = st.number_input("Number of simulation days:", value=252, min_value=1)
 
 
-    with col13:
-        st.subheader('Tax rate')
-        radio_button_tax_rate = st.radio('Choose tax rate distribution', ('Normal', 'Triangular', 'Uniform'))
+# Initializing lists for analysis
+close_end = []
+above_close = []
 
-        if radio_button_tax_rate == 'Normal':
-            mean_input = st.number_input('Mean tax rate (in %)')
-            stddev_input = st.number_input('Tax rate std. dev. (in %)')
-            parameter_dict_1['tax rate'] = mean_input
-            parameter_dict_2['tax rate'] = stddev_input
-            parameter_dict_distribution['tax rate'] = 'normal'
+# For loop for number of simulations desired
+for i in range(simulations):
+    num_days = [days[-1]]
+    close_price = [hist.iloc[-1,0]]
 
-        elif radio_button_tax_rate == 'Triangular':
-            lower_input = st.number_input('Lower end tax rate (in %)')
-            mode_input = st.number_input('Mode tax rate (in %)')
-            parameter_dict_1['tax rate'] = lower_input
-            parameter_dict_2['tax rate'] = mode_input
-            parameter_dict_distribution['tax rate'] = 'triangular'
+    for j in range(days_to_sim):
+        num_days.append(num_days[-1]+1)
+        perc_change = norm.ppf(random(), loc = mean, scale=std_dev)
+        close_price.append(close_price[-1]*(1+perc_change))
 
-        elif radio_button_tax_rate == 'Uniform':
-            lower_input = st.number_input('Lower end tax rate (in %)')
-            upper_input = st.number_input('Upper end tax rate (in %)')
-            parameter_dict_1['tax rate'] = lower_input
-            parameter_dict_2['tax rate'] = upper_input
-            parameter_dict_distribution['tax rate'] = 'uniform'
+    if close_price[-1] > price_orig[-1]:
+        above_close.append(1)
+    else:
+        above_close.append(0)
 
-        
-    col21, col22, col23 = st.columns(3)
+    close_end.append(close_price[-1])
+    plt.plot(num_days, close_price)
 
-    with col21:
-        st.subheader('Net capex/sales')
-        radio_button_tax_rate = st.radio('Choose capex ratio distribution', ('Normal', 'Triangular', 'Uniform'))
+plt.title(f'Monte Carlo stock prices - {simulations} simulations', fontweight='bold')
+plt.xlabel('Trading Days after 01-01-2012', fontsize=12, fontweight='bold')
+plt.ylabel('Closing Stock Price ($)', fontsize=12, fontweight='bold')
 
-        if radio_button_tax_rate == 'Normal':
-            mean_input = st.number_input('Mean capex ratio (in %)')
-            stddev_input = st.number_input('capex ratio std. dev. (in %)')
-            parameter_dict_1['capex ratio'] = mean_input
-            parameter_dict_2['capex ratio'] = stddev_input
-            parameter_dict_distribution['capex ratio'] = 'normal'
+# Average Closing price and probability of increasing after 1 year
 
-        elif radio_button_tax_rate == 'Triangular':
-            lower_input = st.number_input('Lower end capex ratio (in %)')
-            mode_input = st.number_input('Mode capex ratio (in %)')
-            parameter_dict_1['capex ratio'] = lower_input
-            parameter_dict_2['capex ratio'] = mode_input
-            parameter_dict_distribution['capex ratio'] = 'triangular'
+average_closing_price = sum(close_end) / simulations
+average_perc_change = (average_closing_price-price_orig[-1])/price_orig[-1]
 
-        elif radio_button_tax_rate == 'Uniform':
-            lower_input = st.number_input('Lower end capex ratio (in %)')
-            upper_input = st.number_input('Upper end capex ratio (in %)')
-            parameter_dict_1['capex ratio'] = lower_input
-            parameter_dict_2['capex ratio'] = upper_input
-            parameter_dict_distribution['capex ratio'] = 'uniform'
+probability_of_increase = sum(above_close)/ simulations
 
-    with col22:
-        st.subheader('NWC/sales')
-        radio_button_tax_rate = st.radio('Choose NWC ratio distribution', ('Normal', 'Triangular', 'Uniform'))
+# Adicionar linha tracejada com legenda
+plt.axhline(y=average_closing_price, color='blue', linestyle='dashed', label='Average closing price')
+plt.legend()
 
-        if radio_button_tax_rate == 'Normal':
-            mean_input = st.number_input('Mean NWC ratio (in %)')
-            stddev_input = st.number_input('NWC ratio std. dev. (in %)')
-            parameter_dict_1['NWC ratio'] = mean_input
-            parameter_dict_2['NWC ratio'] = stddev_input
-            parameter_dict_distribution['NWC ratio'] = 'normal'
+# Display the plot
+st.pyplot(plt)
 
-        elif radio_button_tax_rate == 'Triangular':
-            lower_input = st.number_input('Lower end NWC ratio (in %)')
-            mode_input = st.number_input('Mode NWC ratio (in %)')
-            parameter_dict_1['NWC ratio'] = lower_input
-            parameter_dict_2['NWC ratio'] = mode_input
-            parameter_dict_distribution['NWC ratio'] = 'triangular'
-
-        elif radio_button_tax_rate == 'Uniform':
-            lower_input = st.number_input('Lower end NWC ratio (in %)')
-            upper_input = st.number_input('Upper end NWC ratio (in %)')
-            parameter_dict_1['NWC ratio'] = lower_input
-            parameter_dict_2['NWC ratio'] = upper_input
-            parameter_dict_distribution['NWC ratio'] = 'uniform'
-
-    with col23:
-        st.subheader('Additional inputs')
-        discount_rate = (st.number_input('Discount rate:')/100)
-        terminal_growth = (st.number_input('Terminal growth rate:')/100)
-        simulation_iterations = (st.number_input('Number of simulation iterations (at most 1000):'))
-        inputs_radio = st.radio('Please click Search if you are ready.', ('Entry', 'Search'))
-
-    equity_value_list = []
-    revenue_list_of_lists = []
-    ebit_list_of_lists = []
-    if inputs_radio == 'Search':
-        parameter_dict_1['latest revenue'] = company.income_statement.loc['totalRevenue', company.income_statement.columns[-1]]
-        parameter_dict_1['net debt'] = company.inputs.loc['netDebt', 'Historical average']
-        if simulation_iterations > 1000:
-            simulation_iterations = 1000
-        elif simulation_iterations < 0:
-            simulation_iterations = 100
-        for i in range(int(simulation_iterations)):
-            model_input = calculate_value_distribution(parameter_dict_1, parameter_dict_2, parameter_dict_distribution)
-            forecast_df = company.get_free_cash_flow_forecast(model_input)
-            revenue_list_of_lists.append(forecast_df.loc['Revenues'])
-            ebit_list_of_lists.append(forecast_df.loc['EBIT'])
-            model_output, equity_value = company.discount_free_cash_flows(model_input, discount_rate, terminal_growth)
-            equity_value_list.append(equity_value)
-    
-    st.header('MC Simulation Output')
-
-    mean_equity_value = np.mean(equity_value_list)
-    stddev_equity_value = np.std(equity_value_list)
-    st.write('Mean equity value: $' + str(comma_format(mean_equity_value )))
-    st.write('Equity value std. deviation: $' + str(comma_format(stddev_equity_value)))
-
-    font_1 = {
-        'family' : 'Arial',
-            'size' : 12
-    }
-
-    font_2 = {
-        'family' : 'Arial',
-            'size' : 14
-    }
-
-    fig1 = plt.figure()
-    plt.style.use('ggplot')  # Altere para o estilo de sua preferência
-    plt.title(ticker_input + ' Monte Carlo Simulation', fontdict = font_1)
-    plt.xlabel('Equity value (in $)', fontdict = font_1)
-    plt.ylabel('Number of occurences', fontdict = font_1)
-    plt.hist(equity_value_list, bins = 50, color = '#006699', edgecolor = 'black')
-    st.pyplot(fig1)
+st.markdown("<br><br>", unsafe_allow_html=True)
 
 
-    col31, col32 = st.columns(2)
-    with col31:
-        fig2 = plt.figure()
-        x = range(6)[1:6]
-       
-        plt.style.use('ggplot')
-        plt.title('Revenue Forecast Monte Carlo Simulation', fontdict = font_2)
-        plt.xticks(ticks = x)
-        plt.xlabel('Year', fontdict = font_2)
-        plt.ylabel('Revenue (in $)', fontdict = font_2)
-        for i in revenue_list_of_lists:
-            plt.plot(x, i)
-        st.pyplot(fig2)
-    
-    with col32:
-        fig3 = plt.figure()
-        x = range(6)[1:6]
-    
-        plt.style.use('ggplot')
-        plt.title('EBIT Forecast Monte Carlo Simulation', fontdict = font_2)
-        plt.xticks(ticks = x)
-        plt.xlabel('Year', fontdict = font_2)
-        plt.ylabel('EBIT (in $)', fontdict = font_2)
-        for i in ebit_list_of_lists:
-            plt.plot(x, i)
-        st.pyplot(fig3)
+# PREDICTIONS
 
-st.write('Disclaimer: Information and output provided on this site do \
-    not constitute investment advice.')
-st.write('Copyright (c) 2022 Alison Sousa')
+st.title('Predictions after 1 year')
+
+st.markdown("<br>", unsafe_allow_html=True)
+
+st.markdown("<span style='color:#31BBDE; font-size:20px; font-weight:700'>Predicted closing price after 1 year:  </span> $ {}".format(str(round(average_closing_price,2))),
+            unsafe_allow_html=True)
+st.markdown("<span style='color:#31BBDE; font-size:20px; font-weight:700'>Predicted percent increase after 1 year:  </span> {} %".format(str(round(average_perc_change*100,2))),
+            unsafe_allow_html=True)
+st.markdown("<span style='color:#31BBDE; font-size:20px; font-weight:700'>Probability of stock price increasing after 1 year:  </span> {} %".format(str(round(probability_of_increase*100,2))),
+            unsafe_allow_html=True)
+
+st.markdown("<br>", unsafe_allow_html=True)
+
+if average_perc_change<0:
+    st.write(f'A year from now, the predicted average price will be ${str(round(average_closing_price,2))} ({str(round(average_perc_change*100,2))}%) higher than it was on {end_date}. The likelihood of {name} increasing after a year is also {str(round(probability_of_increase*100,2))}%.')
+else:
+    st.write(f'A year from now, the predicted average price will be ${str(round(average_closing_price, 2))} ({str(round(average_perc_change * 100, 2))}%) lower than it was on {end_date}. The likelihood of {name} increasing after a year is also {str(round((1-probability_of_increase) * 100, 2))}%.')
+
+st.markdown("<br>", unsafe_allow_html=True)
+st.write('Over a period of time, you will notice that the average price, average percent change, and probability of increasing are all convergent on a particular value. If you run the code with one simulation, the result will be randomized each time.')
+
+# FINAL PART
+
+st.markdown("<br>", unsafe_allow_html=True)
+
+st.markdown("<span style='color:black; font-size:40px; font-weight:700'>Good investments!</span>",unsafe_allow_html=True)
+
+SOCIAL_MEDIA = {
+    "Linkedin": "https://www.linkedin.com/in/ricardoandreom/",
+    "Github": "https://github.com/ricardoandreom",
+    "Medium": "https://medium.com/@ricardoandreom",
+    "Halfspace Analytics Instagram": "https://www.instagram.com/halfspace_analytics/",
+    "Digital CV": "https://ricardo-marques-digital-cv.streamlit.app/"
+}
+st.markdown("<br><br>", unsafe_allow_html=True)
+
+st.markdown("<span style='color:black; font-size:20px; font-weight:600'>Follow my work on: </span>",unsafe_allow_html=True)
+
+cols = st.columns(len(SOCIAL_MEDIA))
+for index, (platform,link) in enumerate(SOCIAL_MEDIA.items()):
+    cols[index].write(f"[{platform}]({link})")
+
+EMAIL = "ricardo.andreom@gmail.com"
+st.markdown("<span style='color:black; font-size:18px; font-weight:600'>Ricardo Marques </span>",unsafe_allow_html=True)
+st.write("📩",EMAIL)
+
