@@ -396,7 +396,8 @@ with st.expander('Monte Carlo Simulation'):
     with col31:
         fig2 = plt.figure()
         x = range(6)[1:6]
-        plt.style.use('seaborn-whitegrid')
+       
+        plt.style.use('ggplot')
         plt.title('Revenue Forecast Monte Carlo Simulation', fontdict = font_2)
         plt.xticks(ticks = x)
         plt.xlabel('Year', fontdict = font_2)
@@ -408,7 +409,8 @@ with st.expander('Monte Carlo Simulation'):
     with col32:
         fig3 = plt.figure()
         x = range(6)[1:6]
-        plt.style.use('seaborn-whitegrid')
+    
+        plt.style.use('ggplot')
         plt.title('EBIT Forecast Monte Carlo Simulation', fontdict = font_2)
         plt.xticks(ticks = x)
         plt.xlabel('Year', fontdict = font_2)
