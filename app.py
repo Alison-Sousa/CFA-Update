@@ -165,23 +165,3 @@ st.write('Over a period of time, you will notice that the average price, average
 st.markdown("<br>", unsafe_allow_html=True)
 
 st.markdown("<span style='color:black; font-size:40px; font-weight:700'>Good investments!</span>",unsafe_allow_html=True)
-
-SOCIAL_MEDIA = {
-    "Linkedin": "https://www.linkedin.com/in/ricardoandreom/",
-    "Github": "https://github.com/ricardoandreom",
-    "Medium": "https://medium.com/@ricardoandreom",
-    "Halfspace Analytics Instagram": "https://www.instagram.com/halfspace_analytics/",
-    "Digital CV": "https://ricardo-marques-digital-cv.streamlit.app/"
-}
-st.markdown("<br><br>", unsafe_allow_html=True)
-
-st.markdown("<span style='color:black; font-size:20px; font-weight:600'>Follow my work on: </span>",unsafe_allow_html=True)
-
-cols = st.columns(len(SOCIAL_MEDIA))
-for index, (platform,link) in enumerate(SOCIAL_MEDIA.items()):
-    cols[index].write(f"[{platform}]({link})")
-
-EMAIL = "ricardo.andreom@gmail.com"
-st.markdown("<span style='color:black; font-size:18px; font-weight:600'>Ricardo Marques </span>",unsafe_allow_html=True)
-st.write("📩",EMAIL)
-
