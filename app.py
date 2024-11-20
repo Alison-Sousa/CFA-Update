@@ -145,7 +145,7 @@ class Company:
         return df, equity_value
 
 
-st.title('Monte Carlo Valuation App')
+st.title('CFA Challenge')
 
 with st.expander('How to Use'):
     st.write('This application allows you to conduct a **probabilistic** \
@@ -421,4 +421,4 @@ with st.expander('Monte Carlo Simulation'):
 
 st.write('Disclaimer: Information and output provided on this site do \
     not constitute investment advice.')
-st.write('Copyright (c) 2021 Julian Marx')
+st.write('Copyright (c) 2022 Alison Sousa')
