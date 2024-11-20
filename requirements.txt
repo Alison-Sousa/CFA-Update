@@ -3,3 +3,4 @@ numpy
 yahoo_fin
 streamlit
 matplotlib
+seaborn
